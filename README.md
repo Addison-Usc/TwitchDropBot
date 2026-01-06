@@ -20,4 +20,5 @@ It runs in the background, finds eligible streams, simulates watch time by sendi
 3. Run command: `docker compose run --rm twitchdrops` in the same directory as the docker-compose.yml file
 4. Login to twitch
 5. Enter # that matches game
+6. Stop in docker desktop and close cmd when done
 
