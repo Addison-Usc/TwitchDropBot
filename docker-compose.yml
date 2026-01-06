@@ -1,6 +1,6 @@
 services:
   twitchdrops:
-    image: docker.io/addisonu/twitchdropsentry:latest
+    image: docker.io/addisonu/twitchdropbot:latest
     volumes:
       - ./data:/app/data
     stdin_open: true

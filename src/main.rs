@@ -72,6 +72,15 @@ async fn main () -> Result<(), Box<dyn Error>> {
 
 async fn main_logic (client: Arc<TwitchClient>, grouped: BTreeMap<usize, Vec<DropCampaigns>>, home_dir: &Path) -> Result<(), Box<dyn Error>> {
     let input: usize = dialoguer::Input::new().with_prompt("Select game").interact_text()?;
+    let duration_minutes: u64 = dialoguer::Input::new().with_prompt("How many minutes should the session run? (0 = no limit)").interact_text()?;
+    if duration_minutes > 0 {
+        let seconds = duration_minutes * 60;
+        tokio::spawn(async move {
+            sleep(Duration::from_secs(seconds)).await;
+            println!("Requested runtime elapsed. Exiting...");
+            std::process::exit(0);
+        });
+    }
     if let Some(current_campaigns) = grouped.get(&input) {
 
         let (tx_watch, mut rx_watch) = tokio::sync::watch::channel(String::new());
