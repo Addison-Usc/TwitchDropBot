@@ -13,3 +13,11 @@ It runs in the background, finds eligible streams, simulates watch time by sendi
 5. Monitors your drop progress with a **real-time terminal progress bar**.
 6. **Automatically claims** the drop once the required time is met, with robust retry logic.
 7. Saves claimed drops to `data/cash.json` to avoid re-claiming.
+
+### To Run
+1. Install Docker Desktop
+2. Download just the docker-compose.yml from this repo
+3. Run command: `docker compose run --rm twitchdrops` in the same directory as the docker-compose.yml file
+4. Login to twitch
+5. Enter # that matches game
+

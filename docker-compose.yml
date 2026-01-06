@@ -1,0 +1,7 @@
+services:
+  twitchdrops:
+    image: docker.io/addisonu/twitchdropsentry:latest
+    volumes:
+      - C:\Users\ajusc\containers\twitchdropbot\data:/app/data
+    stdin_open: true
+    tty: true
