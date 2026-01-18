@@ -15,7 +15,7 @@ mod web;
 const STREAM_SLEEP: u64 = 20;
 const MAX_COUNT: u64 = 3;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct SessionControl {
     stop: Arc<AtomicBool>,
 }
@@ -146,7 +146,7 @@ pub(crate) async fn run_session(
     info!("Drop progress tracker is active");
     filter_streams(client.clone(), drop_campaigns.clone(), control.clone()).await;
     info!("Stream filtering has begun");
-    update_stream(drop_campaigns, tx, notify, control.clone()).await;
+    update_stream(drop_campaigns.clone(), tx, notify, control.clone()).await;
     info!("Stream priority updated");
 
     for campaign in drop_campaigns.iter() {

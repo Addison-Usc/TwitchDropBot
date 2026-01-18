@@ -23,7 +23,7 @@ pub static ALLOW_CHANNELS: Lazy<Arc<Mutex<HashMap<String, HashSet<Channels>>>>> 
 #[macro_export]
 macro_rules! retry {
     ($func:expr) => {
-        retry_backup(|| $func).await.expect("Retry failed after MAX_ATTEMPTS attempts")
+        $crate::r#static::retry_backup(|| $func).await.expect("Retry failed after MAX_ATTEMPTS attempts")
     };
 }
 

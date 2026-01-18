@@ -202,22 +202,21 @@ async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Respon
     let auth_state = state.auth_info.clone();
     let client_state = state.client.clone();
     tokio::spawn(async move {
-        match client.auth(device_auth).await {
-            Ok(()) => {}
-            Err(e) => {
-                let mut info = auth_state.lock().await;
-                info.status = AuthStatus::Error;
-                info.error = Some(format!("{e}"));
-                return;
-            }
+        if let Err(e) = client.auth(device_auth).await {
+            let msg = format!("{e}");
+            let mut info = auth_state.lock().await;
+            info.status = AuthStatus::Error;
+            info.error = Some(msg);
+            return;
         }
         let path = data_dir.join("save.json");
         let client = match client.save_file(&path).await {
             Ok(c) => c,
             Err(e) => {
+                let msg = format!("{e}");
                 let mut info = auth_state.lock().await;
                 info.status = AuthStatus::Error;
-                info.error = Some(format!("{e}"));
+                info.error = Some(msg);
                 return;
             }
         };
