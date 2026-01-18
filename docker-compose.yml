@@ -1,7 +1,17 @@
 services:
   twitchdrops:
-    image: docker.io/addisonu/twitchdropbot:latest
+    build: .
+    image: addisonu/twitchdropbot:local
     volumes:
       - ./data:/app/data
+    environment:
+      - UI_USER=${UI_USER}
+      - UI_PASSWORD=${UI_PASSWORD}
+      - UI_HOST=0.0.0.0
+      - UI_PORT=8123
+      - DATA_DIR=/app/data
+    ports:
+      - "8123:8123"
+    user: "1000:1000"
     stdin_open: true
     tty: true

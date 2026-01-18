@@ -9,16 +9,19 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::debug;
 use twitch_gql_rs::{TwitchClient, structs::{Channels, DropCampaigns, GameDirectory}};
 
-use crate::{retry, r#static::{ALLOW_CHANNELS, CHANNEL_IDS, Channel, DEFAULT_CHANNELS, retry_backup}};
+use crate::{retry, SessionControl, r#static::{ALLOW_CHANNELS, CHANNEL_IDS, Channel, DEFAULT_CHANNELS}};
 
 const UPDATE_TIME: u64 = 15;
 const MAX_TOPICS: usize = 50;
 const WS_URL: &'static str = "wss://pubsub-edge.twitch.tv/v1";
 
-pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropCampaigns>>) {
+pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropCampaigns>>, control: SessionControl) {
     let mut count = 0;
     let mut video_vec = HashSet::new();
     for campaign in campaigns.iter() {
+        if control.should_stop() {
+            return;
+        }
         let campaign_details = retry!(client.get_campaign_details(&campaign.id));
         if let Some(allow) = campaign_details.allow.channels {
             let mut allow_channels = ALLOW_CHANNELS.lock().await;
@@ -26,6 +29,9 @@ pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropC
             allow_channels.insert(campaign.id.to_string(), allow.clone());
             drop(allow_channels);
             for channel in allow {
+                if control.should_stop() {
+                    return;
+                }
                 let stream_info = retry!(client.get_stream_info(&channel.name));
                 if stream_info.stream.is_some() {
                     if count >= MAX_TOPICS {
@@ -45,6 +51,9 @@ pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropC
             all_default.insert(campaign.id.to_string(), game_directory.clone());
             drop(all_default);
             for channel in game_directory {
+                if control.should_stop() {
+                    return;
+                }
                 let stream_info = retry!(client.get_stream_info(&channel.broadcaster.login));
                 if count >= MAX_TOPICS {
                     break;
@@ -63,10 +72,13 @@ pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropC
     *lock = video_vec;
     drop(lock);
     debug!("Drop lock video");
-    spawn_ws(client.access_token.clone().unwrap()).await;
+    spawn_ws(client.access_token.clone().unwrap(), control.clone()).await;
 
     tokio::spawn(async move {
         loop {
+            if control.should_stop() {
+                break;
+            }
             let lock = CHANNEL_IDS.lock().await;
             let count = lock.len();
             drop(lock);
@@ -77,6 +89,9 @@ pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropC
                     if let Some(channels) = allow_channels.get(&campaign.id) {
                         for channel in channels {
                             if to_add.len() + count  >= MAX_TOPICS {
+                                break;
+                            }
+                            if control.should_stop() {
                                 break;
                             }
                             let stream_info = retry!(client.get_stream_info(&channel.name));
@@ -94,6 +109,9 @@ pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropC
                         let game_directory: HashSet<GameDirectory> = game_directory.into_iter().collect();
                         default_channels.insert(campaign.id.clone(), game_directory.clone());
                         for channel in &game_directory {
+                            if control.should_stop() {
+                                break;
+                            }
                             let available_drops = retry!(client.get_available_drops_for_channel(&channel.broadcaster.id));
                             if available_drops.viewerDropCampaigns.is_some() {
                                 to_add.insert(Channel { channel_id: channel.broadcaster.id.clone(), channel_login: channel.broadcaster.login.clone() });
@@ -128,13 +146,19 @@ pub async fn filter_streams (client: Arc<TwitchClient>, campaigns: Arc<Vec<DropC
 }
 
 //ws_logick
-async fn spawn_ws (auth_token: String) {
+async fn spawn_ws (auth_token: String, control: SessionControl) {
     tokio::spawn(async move {
         loop {
+            if control.should_stop() {
+                break;
+            }
             let mut send_channels: HashSet<Channel> = HashSet::new();
             let (ws_stream, _) = retry!(connect_async(WS_URL));
             let (mut write, mut read) = ws_stream.split();
             loop {
+                if control.should_stop() {
+                    break;
+                }
                 let mut channel_ids = CHANNEL_IDS.lock().await;
                 let new_channels: Vec<Channel> = channel_ids.iter().filter(|id| !send_channels.contains(*id)).cloned().collect();
                 let delete_channels: Vec<Channel> = send_channels.iter().filter(|id| !channel_ids.contains(&id)).cloned().collect();
@@ -251,9 +275,12 @@ impl PartialOrd for Priority {
     }
 }
 
-async fn send_now_watched (mut rx: Receiver<BinaryHeap<Priority>>, tx_now_watch: broadcast::Sender<Channel>, notify: Arc<Notify>, tx_for_delete: tokio::sync::watch::Sender<Channel>) {
+async fn send_now_watched (mut rx: Receiver<BinaryHeap<Priority>>, tx_now_watch: broadcast::Sender<Channel>, notify: Arc<Notify>, tx_for_delete: tokio::sync::watch::Sender<Channel>, control: SessionControl) {
     tokio::spawn(async move {
         loop {
+            if control.should_stop() {
+                break;
+            }
             if let Ok(_) = rx.changed().await {
                 let watch = rx.borrow().clone();
                     if let Some(max) = watch.peek() {
@@ -264,6 +291,9 @@ async fn send_now_watched (mut rx: Receiver<BinaryHeap<Priority>>, tx_now_watch:
                         notify.notified().await;
 
                         loop {
+                            if control.should_stop() {
+                                break;
+                            }
                             if let Err(e) = tx_for_delete.send(max.name.clone()) {
                                 tracing::error!("{e}");
                                 sleep(Duration::from_secs(5)).await;
@@ -288,19 +318,23 @@ async fn send_now_watched (mut rx: Receiver<BinaryHeap<Priority>>, tx_now_watch:
     });
 }
 
-pub async fn update_stream (campaigns: Arc<Vec<DropCampaigns>>, tx_now_watch: Sender<Channel>, notify: Arc<Notify>) {
+pub async fn update_stream (campaigns: Arc<Vec<DropCampaigns>>, tx_now_watch: Sender<Channel>, notify: Arc<Notify>, control: SessionControl) {
     tokio::spawn(async move {
         let mut heap: BinaryHeap<Priority> = BinaryHeap::new();
         let mut old_channel_ids: HashSet<Channel> = HashSet::new();
         let (tx, rx) = tokio::sync::watch::channel(BinaryHeap::new());
         let (tx_for_delete, mut rx_for_delete) = tokio::sync::watch::channel(Channel::default());
 
-        send_now_watched(rx, tx_now_watch, notify, tx_for_delete).await;
+        send_now_watched(rx, tx_now_watch, notify, tx_for_delete, control.clone()).await;
 
         let channel_to_delete = Arc::new(Mutex::new(Channel::default()));
         let channel_to_delete_clone = Arc::clone(&channel_to_delete);
+        let control_for_delete = control.clone();
         tokio::spawn(async move {
             loop {
+                if control_for_delete.should_stop() {
+                    break;
+                }
                 if let Ok(_) = rx_for_delete.changed().await {
                     let channel = rx_for_delete.borrow().clone();
                     let mut lock = channel_to_delete.lock().await;
@@ -310,6 +344,9 @@ pub async fn update_stream (campaigns: Arc<Vec<DropCampaigns>>, tx_now_watch: Se
         });
 
         loop {
+            if control.should_stop() {
+                break;
+            }
             let channel_ids = CHANNEL_IDS.lock().await.clone();
             let allow_channels = ALLOW_CHANNELS.lock().await.clone();
             let default_channels = DEFAULT_CHANNELS.lock().await.clone();
