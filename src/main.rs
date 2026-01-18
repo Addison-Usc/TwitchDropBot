@@ -170,7 +170,7 @@ pub(crate) async fn run_session(
                 break;
             }
             rx_watch.changed().await.unwrap();
-            let drop_id = rx_watch.borrow();
+            let drop_id = rx_watch.borrow().clone();
             if drop_id.is_empty() {
                 sleep(Duration::from_secs(10)).await;
                 continue;

@@ -202,8 +202,12 @@ async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Respon
     let auth_state = state.auth_info.clone();
     let client_state = state.client.clone();
     tokio::spawn(async move {
-        if let Err(e) = client.auth(device_auth).await {
-            let msg = format!("{e}");
+        let auth_error = match client.auth(device_auth).await {
+            Ok(()) => None,
+            Err(e) => Some(e.to_string()),
+        };
+
+        if let Some(msg) = auth_error {
             let mut info = auth_state.lock().await;
             info.status = AuthStatus::Error;
             info.error = Some(msg);
